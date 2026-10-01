@@ -1,0 +1,25 @@
+# Local configuration
+.env
+*.local
+config.local
+
+# Backup data
+snapshots/
+latest
+
+# Temporary files
+*.tmp
+*.log
+*.swp
+*~
+
+# Secrets and keys
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Editor / OS metadata
+.DS_Store
+.idea/
+.vscode/

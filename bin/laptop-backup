@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+SNAPSHOT=""
+
+cleanup_failed_backup() {
+    exit_code=$?
+
+    if (( exit_code != 0 )) && [[ -n "$SNAPSHOT" && -d "$SNAPSHOT" ]]; then
+        echo
+        echo "Backup failed. Removing incomplete snapshot:"
+        echo "$SNAPSHOT"
+        rm -rf -- "$SNAPSHOT"
+    fi
+
+    exit "$exit_code"
+}
+
+trap cleanup_failed_backup EXIT
+# Prevent multiple backups from running at the same time.
+LOCK_FILE="/tmp/laptop-backup-$USER.lock"
+exec 9>"$LOCK_FILE"
+
+if ! flock -n 9; then
+    echo "ERROR: A laptop backup is already running."
+    exit 1
+fi
+DRY_RUN=false
+
+if [[ "${1:-}" == "--dry-run" ]]; then
+    DRY_RUN=true
+fi
+BACKUP_LABEL="${BACKUP_LABEL:-LAPTOP_BACKUP}"
+BACKUP_DRIVE="${BACKUP_DRIVE:-/run/media/$USER/$BACKUP_LABEL}"
+BACKUP_ROOT="$BACKUP_DRIVE/snapshots"
+SOURCE="${SOURCE:-$HOME}"
+
+# Refuse to run unless the external backup drive is mounted.
+if ! mountpoint -q "$BACKUP_DRIVE"; then
+    echo "ERROR: Backup drive is not mounted at $BACKUP_DRIVE"
+    exit 1
+fi
+
+# Verify that the mounted filesystem is actually our backup SSD.
+BACKUP_UUID="${BACKUP_UUID:-}"
+
+if [[ -n "$BACKUP_UUID" ]]; then
+    if [[ "$(findmnt -no UUID "$BACKUP_DRIVE")" != "$BACKUP_UUID" ]]; then
+        echo "ERROR: Wrong filesystem mounted at $BACKUP_DRIVE"
+        exit 1
+    fi
+fi
+
+# Create a timestamped snapshot directory.
+TIMESTAMP="$(date '+%Y-%m-%d_%H-%M-%S')"
+SNAPSHOT="$BACKUP_ROOT/$TIMESTAMP"
+LATEST="$BACKUP_DRIVE/latest"
+
+mkdir -p "$BACKUP_ROOT"
+mkdir -p "$SNAPSHOT"
+
+echo "Starting laptop backup"
+echo "Source:      $SOURCE"
+echo "Destination: $SNAPSHOT"
+
+# Files and directories to back up.
+BACKUP_ITEMS=(
+    "Projects"
+    "Documents"
+    "Pictures"
+    "Music"
+    "Wallpapers"
+    ".config"
+    ".ssh"
+    ".aws"
+    ".local/bin"
+    ".local/state"
+    ".local/share/budget"
+    ".local/share/budget-dev"
+    ".local/share/applications"
+)
+
+BACKUP_ITEMS+=(
+    ".hermes/memories"
+    ".hermes/state"
+    ".hermes/cron"
+    ".hermes/sessions"
+    ".hermes/skills"
+    ".hermes/terminal-sessions"
+    ".hermes/pastes"
+    ".codex/sessions"
+    ".codex/sqlite"
+    ".codex/skills"
+)
+
+BACKUP_ITEMS+=(
+    ".bash_history"
+    ".bash_logout"
+    ".bash_profile"
+    ".bashrc"
+    ".claude.json"
+    ".XCompose"
+)
+
+# Build rsync options.
+RSYNC_OPTS=(
+    -a
+    --human-readable
+    --info=stats2,progress2
+)
+if [[ "$DRY_RUN" == true ]]; then
+    RSYNC_OPTS+=(--dry-run)
+    echo "DRY RUN: No files will be copied."
+fi
+# Reuse unchanged files from the previous snapshot.
+if [[ -L "$LATEST" && -d "$LATEST" ]]; then
+    RSYNC_OPTS+=(--link-dest="$LATEST")
+fi
+
+# Copy each selected item into the new snapshot.
+for item in "${BACKUP_ITEMS[@]}"; do
+    source_path="$SOURCE/./$item"
+
+    if [[ ! -e "$source_path" ]]; then
+        echo "Skipping missing: $item"
+        continue
+    fi
+
+    echo
+    echo "Backing up: $item"
+
+    rsync "${RSYNC_OPTS[@]}" \
+        --relative \
+        "$source_path" \
+        "$SNAPSHOT/"
+done
+
+if [[ "$DRY_RUN" == true ]]; then
+    rmdir "$SNAPSHOT" 2>/dev/null || true
+    echo
+    echo "Dry run completed successfully."
+    echo "No files were copied."
+else
+    # Point "latest" to the newly completed snapshot.
+    ln -sfn "$SNAPSHOT" "$LATEST"
+
+    echo
+    echo "Backup completed successfully."
+    echo "Snapshot: $SNAPSHOT"
+fi
+
+echo
+df -h "$BACKUP_DRIVE"

@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for removable backup drive mounts
+
+[Path]
+PathChanged=/run/media/%u
+Unit=laptop-backup.service
+
+[Install]
+WantedBy=default.target

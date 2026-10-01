@@ -1,0 +1,7 @@
+[Unit]
+Description=Backup laptop to encrypted removable drive
+
+[Service]
+Type=oneshot
+Environment=BACKUP_UUID=YOUR_FILESYSTEM_UUID
+ExecStart=%h/.local/bin/laptop-backup
