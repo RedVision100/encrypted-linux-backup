@@ -79,7 +79,7 @@ LUKS/`cryptsetup` is recommended when the backup contains private data.
 Clone the repository:
 
 ``` bash
-git clone YOUR_REPOSITORY_URL
+git clone https://github.com/RedVision100/encrypted-linux-backup.git
 cd encrypted-linux-backup
 ```
 
