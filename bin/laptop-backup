@@ -143,7 +143,35 @@ if [[ "$DRY_RUN" == true ]]; then
 else
     # Point "latest" to the newly completed snapshot.
     ln -sfn "$SNAPSHOT" "$LATEST"
+    # Keep only the newest successful snapshots.
+    MAX_SNAPSHOTS="${MAX_SNAPSHOTS:-30}"
+if [[ ! "$MAX_SNAPSHOTS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: MAX_SNAPSHOTS must be a positive integer."
+    exit 1
+fi
+    mapfile -t snapshots < <(
+    find "$BACKUP_ROOT" \
+        -mindepth 1 \
+        -maxdepth 1 \
+        -type d \
+        -regextype posix-extended \
+        -regex '.*/[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}' \
+        -printf '%f\n' |
+    sort
+)
 
+    if (( ${#snapshots[@]} > MAX_SNAPSHOTS )); then
+        remove_count=$(( ${#snapshots[@]} - MAX_SNAPSHOTS ))
+
+        echo
+        echo "Pruning $remove_count old snapshot(s)..."
+
+        for (( i=0; i<remove_count; i++ )); do
+            old_snapshot="$BACKUP_ROOT/${snapshots[$i]}"
+            echo "Removing: $old_snapshot"
+            rm -rf -- "$old_snapshot"
+        done
+    fi
     echo
     echo "Backup completed successfully."
     echo "Snapshot: $SNAPSHOT"
