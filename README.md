@@ -61,6 +61,17 @@ Each snapshot looks like an independent backup. Unchanged regular files can shar
 
 Deleting an old snapshot does not delete unchanged files that are still hard-linked from another snapshot.
 
+## Snapshot Retention
+
+By default, the backup system keeps the newest 30 successful snapshots.
+
+After a new backup completes successfully, snapshots older than the configured retention limit are automatically removed.
+
+The retention limit can be changed with the `MAX_SNAPSHOTS` environment variable:
+
+```text
+MAX_SNAPSHOTS=60
+
 ## Requirements
 
 - Linux
