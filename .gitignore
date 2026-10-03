@@ -1,5 +1,6 @@
 # Local configuration
 .env
+backup-mirror.env
 *.local
 config.local
 

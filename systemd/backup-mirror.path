@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch for encrypted backup mount changes
+
+[Path]
+# Adjust this directory if your desktop mounts removable filesystems elsewhere.
+PathChanged=/run/media/%u
+Unit=backup-mirror.service
+
+[Install]
+WantedBy=default.target
