@@ -16,6 +16,7 @@ The backup runs automatically after an encrypted backup drive is unlocked and mo
 - Automatic cleanup of incomplete snapshots
 - `latest` symlink pointing to the newest successful snapshot
 - Selective backup of files and directories
+- Optional secondary encrypted backup mirror
 - No LUKS passphrases or encryption keys stored by the backup script
 
 ## How It Works
@@ -25,6 +26,17 @@ The system has three main components:
 1.  **LUKS** encrypts the removable drive.
 2.  **systemd** detects changes to the user's removable-media directory after the drive is unlocked and mounted.
 3.  **rsync** creates a new timestamped snapshot.
+
+An optional mirror adds a second encrypted backup filesystem:
+
+``` text
+laptop -> primary encrypted backup -> secondary encrypted backup
+```
+
+The mirror copies the completed snapshot structure from the primary backup to
+the secondary backup. It preserves hard links, but deliberately does not use
+`rsync --delete`: files and snapshots removed from the primary backup remain on
+the secondary backup until you remove them there intentionally.
 
 A typical workflow is:
 
@@ -102,12 +114,26 @@ cp bin/laptop-backup ~/.local/bin/laptop-backup
 chmod +x ~/.local/bin/laptop-backup
 ```
 
+To install the optional secondary-backup mirror script:
+
+``` bash
+cp bin/backup-mirror ~/.local/bin/backup-mirror
+chmod +x ~/.local/bin/backup-mirror
+```
+
 Install the systemd user units:
 
 ``` bash
 mkdir -p ~/.config/systemd/user
 cp systemd/laptop-backup.service ~/.config/systemd/user/
 cp systemd/laptop-backup.path ~/.config/systemd/user/
+```
+
+The optional mirror uses separate generic user units:
+
+``` bash
+cp systemd/backup-mirror.service ~/.config/systemd/user/
+cp systemd/backup-mirror.path ~/.config/systemd/user/
 ```
 
 ## Configuration
@@ -154,6 +180,76 @@ Environment=BACKUP_UUID=YOUR_FILESYSTEM_UUID
 with the actual filesystem UUID.
 
 Do not use a LUKS passphrase here. `BACKUP_UUID` is only the filesystem identifier.
+
+## Secondary Backup Mirror
+
+`backup-mirror` mirrors a primary encrypted backup drive onto a distinct
+secondary encrypted backup drive. It is intended to run only after both drives
+are unlocked and mounted.
+
+Create `~/.config/backup-mirror.env` with your own mountpoints and filesystem
+UUIDs. Do not add this file to the repository.
+
+``` ini
+SOURCE_MOUNT=/path/to/primary-backup
+DEST_MOUNT=/path/to/secondary-backup
+SOURCE_UUID=PRIMARY_FILESYSTEM_UUID
+DEST_UUID=SECONDARY_FILESYSTEM_UUID
+```
+
+All four values are required. Both mount paths must be absolute. Find each
+filesystem UUID after mounting it:
+
+``` bash
+findmnt -no UUID /path/to/primary-backup
+findmnt -no UUID /path/to/secondary-backup
+```
+
+The mirror script refuses to run unless both configured mountpoints are
+mounted, their UUIDs match, and source and destination are different locations
+and devices. It preserves snapshot hard links with `rsync -H`, excludes each
+filesystem's `lost+found`, and excludes the primary `latest` symlink. It
+requires the resolved source `snapshots` directory to be directly under the
+resolved source mount, then validates that the primary `latest` symlink refers
+to one of those snapshot directories before creating a relative `latest`
+symlink on the secondary backup.
+
+The mirror does not use `rsync --delete`. Deletions from the primary backup are
+intentionally not propagated to the secondary backup.
+
+### Enable the Mirror
+
+`backup-mirror.service` checks both configured mountpoints every two seconds
+for up to 60 seconds so a desktop mount/unlock race does not start the script
+too early. UUID validation inside `backup-mirror` remains the authoritative
+safety check.
+
+The path unit watches the common per-user removable-media directory
+`/run/media/%u`. If your system mounts removable filesystems elsewhere, edit
+the installed `PathChanged` directory to match the parent directory containing
+your configured mountpoints.
+
+``` bash
+systemctl --user daemon-reload
+systemctl --user enable --now backup-mirror.path
+systemctl --user status backup-mirror.path
+```
+
+Run it manually after mounting both filesystems:
+
+``` bash
+SOURCE_MOUNT=/path/to/primary-backup \
+DEST_MOUNT=/path/to/secondary-backup \
+SOURCE_UUID=PRIMARY_FILESYSTEM_UUID \
+DEST_UUID=SECONDARY_FILESYSTEM_UUID \
+~/.local/bin/backup-mirror
+```
+
+View logs with:
+
+``` bash
+journalctl --user -u backup-mirror.service -n 50 --no-pager
+```
 
 ## Choose What Gets Backed Up
 
@@ -265,6 +361,13 @@ rsync -a \
 
 Always inspect the source and destination before performing a large restore.
 
+To restore ordinary files from either encrypted backup, copy from its `latest/`
+directory or from a chosen older directory under `snapshots/`. For example:
+
+``` bash
+cp -a /path/to/backup/latest/Documents/example.txt ~/Documents/
+```
+
 ## Encryption
 
 This project does **not** create, unlock, or manage LUKS encryption.
@@ -287,4 +390,4 @@ For that reason:
 
 ## Status
 
-This project is currently a small personal Linux backup utility. Test it with your own environment and data before relying on it as your only backup.
+This project is a small Linux backup utility. Test it with your own environment and data before relying on it as your only backup.

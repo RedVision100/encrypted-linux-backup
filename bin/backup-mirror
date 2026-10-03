@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+require_configuration() {
+    local name=$1
+    local value=${!name:-}
+
+    if [[ -z "$value" ]]; then
+        echo "ERROR: $name must be configured." >&2
+        exit 1
+    fi
+}
+
+require_configuration SOURCE_MOUNT
+require_configuration DEST_MOUNT
+require_configuration SOURCE_UUID
+require_configuration DEST_UUID
+
+if [[ "$SOURCE_MOUNT" != /* || "$DEST_MOUNT" != /* ]]; then
+    echo "ERROR: SOURCE_MOUNT and DEST_MOUNT must be absolute paths." >&2
+    exit 1
+fi
+
+if [[ "$SOURCE_UUID" == "$DEST_UUID" ]]; then
+    echo "ERROR: SOURCE_UUID and DEST_UUID must identify different filesystems." >&2
+    exit 1
+fi
+
+if ! mountpoint -q "$SOURCE_MOUNT"; then
+    echo "ERROR: Primary backup is not mounted at $SOURCE_MOUNT." >&2
+    exit 1
+fi
+
+if ! mountpoint -q "$DEST_MOUNT"; then
+    echo "ERROR: Secondary backup is not mounted at $DEST_MOUNT." >&2
+    exit 1
+fi
+
+SOURCE_PATH=$(readlink -f -- "$SOURCE_MOUNT")
+DEST_PATH=$(readlink -f -- "$DEST_MOUNT")
+SOURCE_DEVICE=$(findmnt -no MAJ:MIN --target "$SOURCE_MOUNT")
+DEST_DEVICE=$(findmnt -no MAJ:MIN --target "$DEST_MOUNT")
+
+if [[ "$SOURCE_PATH" == "$DEST_PATH" || "$SOURCE_DEVICE" == "$DEST_DEVICE" ]]; then
+    echo "ERROR: Source and destination resolve to the same location or device." >&2
+    exit 1
+fi
+
+ACTUAL_SOURCE_UUID=$(findmnt -no UUID --target "$SOURCE_MOUNT")
+ACTUAL_DEST_UUID=$(findmnt -no UUID --target "$DEST_MOUNT")
+
+if [[ "$ACTUAL_SOURCE_UUID" != "$SOURCE_UUID" ]]; then
+    echo "ERROR: Source filesystem UUID does not match SOURCE_UUID." >&2
+    exit 1
+fi
+
+if [[ "$ACTUAL_DEST_UUID" != "$DEST_UUID" ]]; then
+    echo "ERROR: Destination filesystem UUID does not match DEST_UUID." >&2
+    exit 1
+fi
+
+SOURCE_SNAPSHOTS=$(readlink -f -- "$SOURCE_MOUNT/snapshots" || true)
+if [[ ! -d "$SOURCE_SNAPSHOTS" || ! -L "$SOURCE_MOUNT/latest" ]]; then
+    echo "ERROR: Source must contain a snapshots directory and latest symlink." >&2
+    exit 1
+fi
+
+if [[ "$SOURCE_SNAPSHOTS" != "$SOURCE_PATH/snapshots" ]]; then
+    echo "ERROR: Source snapshots must resolve directly under the source mount." >&2
+    exit 1
+fi
+
+LATEST_TARGET=$(readlink -f -- "$SOURCE_MOUNT/latest" || true)
+case "$LATEST_TARGET" in
+    "$SOURCE_SNAPSHOTS"/*)
+        LATEST_SNAPSHOT=${LATEST_TARGET#"$SOURCE_SNAPSHOTS"/}
+        ;;
+    *)
+        echo "ERROR: Source latest does not point into its snapshots directory." >&2
+        exit 1
+        ;;
+esac
+
+if [[ -z "$LATEST_SNAPSHOT" || "$LATEST_SNAPSHOT" == */* || ! -d "$LATEST_TARGET" ]]; then
+    echo "ERROR: Source latest must reference one snapshot directory." >&2
+    exit 1
+fi
+
+echo "Primary backup verified: $SOURCE_MOUNT"
+echo "Secondary backup verified: $DEST_MOUNT"
+echo "Starting backup mirror..."
+
+# Preserve hard-linked snapshots. Do not add --delete: removals on the primary
+# backup are intentionally retained on the secondary backup.
+rsync -aHh --info=progress2 \
+    --exclude='/lost+found/' \
+    --exclude='/latest' \
+    "$SOURCE_MOUNT/" \
+    "$DEST_MOUNT/"
+
+if [[ ! -d "$DEST_MOUNT/snapshots/$LATEST_SNAPSHOT" ]]; then
+    echo "ERROR: The source latest snapshot was not copied to the destination." >&2
+    exit 1
+fi
+
+# Keep the mirror independent of the primary mount path.
+ln -sTfn "snapshots/$LATEST_SNAPSHOT" "$DEST_MOUNT/latest"
+
+echo
+echo "Backup mirror complete."
+echo "Destination latest -> $(readlink "$DEST_MOUNT/latest")"
