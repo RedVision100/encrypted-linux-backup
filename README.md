@@ -221,8 +221,11 @@ intentionally not propagated to the secondary backup.
 
 `backup-mirror.service` checks both configured mountpoints every two seconds
 for up to 60 seconds so a desktop mount/unlock race does not start the script
-too early. UUID validation inside `backup-mirror` remains the authoritative
-safety check.
+too early. Because the path watcher can also be triggered when a drive is
+unmounted, the service exits successfully without running the mirror if both
+configured mountpoints do not become available within 60 seconds. Genuine
+mirror failures still cause the service to fail. UUID validation inside
+`backup-mirror` remains the authoritative safety check.
 
 The path unit watches the common per-user removable-media directory
 `/run/media/%u`. If your system mounts removable filesystems elsewhere, edit
