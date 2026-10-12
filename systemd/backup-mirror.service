@@ -4,7 +4,7 @@ Description=Mirror primary encrypted backup to secondary encrypted backup
 [Service]
 Type=oneshot
 EnvironmentFile=-%h/.config/backup-mirror.env
-# Wait up to 60 seconds for desktop mount/unlock handling. UUID validation
-# remains in backup-mirror as the authoritative safety check.
-ExecStartPre=/usr/bin/bash -c 'for attempt in {1..30}; do mountpoint -q "$SOURCE_MOUNT" && mountpoint -q "$DEST_MOUNT" && exit 0; sleep 2; done; echo "Configured backup mirror mountpoints did not become available within 60 seconds." >&2; exit 1'
-ExecStart=%h/.local/bin/backup-mirror
+# Wait up to 60 seconds for desktop mount/unlock handling. A path change can
+# also be caused by unmounting, so missing drives after the wait are a clean
+# no-op rather than a service failure.
+ExecStart=/usr/bin/bash -c 'for attempt in {1..30}; do if mountpoint -q "$SOURCE_MOUNT" && mountpoint -q "$DEST_MOUNT"; then exec "$HOME/.local/bin/backup-mirror"; fi; sleep 2; done; echo "Backup mirror skipped: both configured mountpoints were not available within 60 seconds."; exit 0'
